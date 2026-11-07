@@ -1,0 +1,149 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  fullName  String
+  mobile    String   @unique
+  createdAt DateTime @default(now())
+
+  wallet Wallet?
+  otp    OtpVerification?
+
+  sentTransfers     Transfer[] @relation("TransferSender")
+  receivedTransfers Transfer[] @relation("TransferReceiver")
+
+  createdGroups        Group[]           @relation("GroupCreator")
+  ledGroups            Group[]           @relation("GroupLeader")
+  groupMemberships     GroupMember[]
+  requestedWithdrawals GroupWithdrawal[] @relation("WithdrawalRequester")
+  reviewedWithdrawals  GroupWithdrawal[] @relation("WithdrawalReviewer")
+}
+
+model Wallet {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique
+  balance   Decimal  @default(0) @db.Decimal(18, 2)
+  createdAt DateTime @default(now())
+
+  user          User          @relation(fields: [userId], references: [id])
+  ledgerEntries LedgerEntry[]
+}
+
+model OtpVerification {
+  id          Int       @id @default(autoincrement())
+  userId      Int       @unique
+  otpHash     String
+  attempts    Int       @default(0)
+  lockedUntil DateTime?
+  expiresAt DateTime @db.Timestamptz(3)
+  verifiedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Transfer {
+  id             Int      @id @default(autoincrement())
+  senderId       Int
+  receiverId     Int
+  amount         Decimal  @db.Decimal(18, 2)
+  idempotencyKey String
+  requestHash    String
+  createdAt      DateTime @default(now())
+
+  sender   User @relation("TransferSender", fields: [senderId], references: [id])
+  receiver User @relation("TransferReceiver", fields: [receiverId], references: [id])
+
+  ledgerEntries LedgerEntry[]
+
+  @@unique([senderId, idempotencyKey])
+  @@index([senderId, createdAt])
+  @@index([receiverId, createdAt])
+}
+
+model Group {
+  id        Int      @id @default(autoincrement())
+  name      String
+  creatorId Int
+  leaderId  Int
+  createdAt DateTime @default(now())
+
+  creator User @relation("GroupCreator", fields: [creatorId], references: [id])
+  leader  User @relation("GroupLeader", fields: [leaderId], references: [id])
+
+  members     GroupMember[]
+  wallet      GroupWallet?
+  withdrawals GroupWithdrawal[]
+}
+
+model GroupMember {
+  id       Int      @id @default(autoincrement())
+  groupId  Int
+  userId   Int
+  role     String   @default("MEMBER")
+  joinedAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId])
+}
+
+model GroupWallet {
+  id        Int      @id @default(autoincrement())
+  groupId   Int      @unique
+  balance   Decimal  @default(0) @db.Decimal(18, 2)
+  pending   Decimal  @default(0) @db.Decimal(18, 2)
+  createdAt DateTime @default(now())
+
+  group         Group         @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  ledgerEntries LedgerEntry[]
+}
+
+model GroupWithdrawal {
+  id          Int       @id @default(autoincrement())
+  groupId     Int
+  requesterId Int
+  reviewerId  Int?
+  amount      Decimal   @db.Decimal(18, 2)
+  status      String    @default("PENDING_APPROVAL")
+  expiresAt DateTime @db.Timestamptz(3)
+  reviewedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  group     Group @relation(fields: [groupId], references: [id])
+  requester User  @relation("WithdrawalRequester", fields: [requesterId], references: [id])
+  reviewer  User? @relation("WithdrawalReviewer", fields: [reviewerId], references: [id])
+
+  @@index([groupId, status])
+  @@index([expiresAt])
+}
+
+model LedgerEntry {
+  id            Int      @id @default(autoincrement())
+  walletId      Int?
+  groupWalletId Int?
+  transferId    Int?
+  type          String
+  amount        Decimal  @db.Decimal(18, 2)
+
+  reference     String?  @unique
+  notify        String   @default("PENDING")
+
+  createdAt     DateTime @default(now())
+
+  wallet      Wallet?      @relation(fields: [walletId], references: [id])
+  groupWallet GroupWallet? @relation(fields: [groupWalletId], references: [id])
+  transfer    Transfer?    @relation(fields: [transferId], references: [id])
+
+  @@index([walletId, createdAt])
+  @@index([groupWalletId, createdAt])
+}
